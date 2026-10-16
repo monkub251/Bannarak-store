@@ -1,125 +1,26 @@
 
-name: Build Windows EXE
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Inspect repository
+      - name: Find Python entry points
         shell: pwsh
         run: |
-          Write-Host "Repository root:"
-          Get-Location
+          Write-Host "=== Repository files ==="
           Get-ChildItem -Force
 
-      - name: Install dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to upgrade pip"
-          }
+          Write-Host "=== Python files ==="
+          Get-ChildItem -Recurse -File -Filter *.py |
+            Where-Object {
+              $_.FullName -notmatch '\\.git\\|\\venv\\|\\__pycache__\\'
+            } |
+            ForEach-Object {
+              Write-Host $_.FullName.Replace("$PWD\", "")
+            }
 
-          python -m pip install pyinstaller
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install PyInstaller"
-          }
-
-          if (Test-Path "requirements.txt") {
-            python -m pip install -r requirements.txt
-          }
-          elseif (Test-Path "BANNARAKX_UNIFIED/requirements.txt") {
-            python -m pip install -r BANNARAKX_UNIFIED/requirements.txt
-          }
-          elseif (Test-Path "pyproject.toml") {
-            python -m pip install .
-          }
-          else {
-            Write-Host "::warning::No dependency manifest found"
-          }
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Dependency installation failed"
-          }
-
-      - name: Build single-file EXE
-        shell: pwsh
-        run: |
-          $entry = @(
-            "run.py",
-            "BANNARAKX_UNIFIED/run.py",
-            "main.py",
-            "app.py"
-          ) | Where-Object { Test-Path $_ } |
-            Select-Object -First 1
-
-          if (-not $entry) {
-            throw "Cannot find Python entry point. Check repository files."
-          }
-
-          $args = @(
-            "--noconfirm",
-            "--clean",
-            "--onefile",
-            "--windowed",
-            "--name", "BANNARAKX PRO"
-          )
-
-          if (Test-Path "assets/logo.ico") {
-            $args += @("--icon", "assets/logo.ico")
-          }
-
-          if (Test-Path "assets") {
-            $args += @("--add-data", "assets;assets")
-          }
-
-          if (Test-Path "tools") {
-            $args += @("--add-data", "tools;tools")
-          }
-
-          if (Test-Path "bannarakx_unified") {
-            $args += @("--collect-submodules", "bannarakx_unified")
-          }
-
-          $args += $entry
-          python -m PyInstaller @args
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller build failed"
-          }
-
-      - name: Verify EXE
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "dist/BANNARAKX PRO.exe")) {
-            throw "EXE output was not created"
-          }
-
-          Get-Item "dist/BANNARAKX PRO.exe" |
-            Select-Object Name, Length
-
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: BANNARAKX-PRO-exe
-          path: "dist/BANNARAKX PRO.exe"
-          if-no-files-found: error
+          Write-Host "=== Project configuration ==="
+          Get-ChildItem -Recurse -File |
+            Where-Object {
+              $_.Name -in @(
+                "*.spec",
+                "pyproject.toml",
+                "setup.py"
+              )
+            } |
+            Select-Object -ExpandProperty FullName
