@@ -1,187 +1,53 @@
-
-name: Build BANNARAKX PRO
+name: build-exe
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
-permissions:
-  contents: read
+concurrency:
+  group: build-exe-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: windows-latest
-
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen   # กัน pytest พังเพราะไม่มีหน้าจอ (PySide6)
+      PYTHONUTF8: "1"              # กัน error ภาษาไทย/unicode ใน console
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
 
-      - name: Inspect repository
-        shell: pwsh
-        run: |
-          Write-Host "Repository files:"
-          Get-ChildItem -Force | Select-Object Name
-
-          Write-Host "Python files:"
-          Get-ChildItem -Recurse -File -Filter "*.py" |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\node_modules\\|\\venv\\|\\dist\\|\\build\\'
-            } |
-            ForEach-Object {
-              Write-Host $_.FullName
-            }
-
-          Write-Host "Project configuration files:"
-          Get-ChildItem -Recurse -File |
-            Where-Object {
-              $_.Name -in @(
-                "package.json",
-                "requirements.txt",
-                "pyproject.toml",
-                "index.html",
-                "setup.py"
-              )
-            } |
-            ForEach-Object {
-              Write-Host $_.FullName
-            }
-
-      - name: Install Python build tools
-        shell: pwsh
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if ($LASTEXITCODE -ne 0) {
-            throw "Pip installation failed."
-          }
+          pip install -r requirements-dev.txt
 
-          python -m pip install pyinstaller
-          if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller installation failed."
-          }
+      - name: Run tests
+        run: python -m pytest -q tests
 
-      - name: Install project dependencies
-        shell: pwsh
-        run: |
-          if (Test-Path "requirements.txt") {
-            python -m pip install -r requirements.txt
-          }
-          elseif (Test-Path "BANNARAKX_UNIFIED/requirements.txt") {
-            python -m pip install -r BANNARAKX_UNIFIED/requirements.txt
-          }
-          elseif (Test-Path "pyproject.toml") {
-            python -m pip install .
-          }
-          else {
-            Write-Host "No Python dependency manifest found."
-            Write-Host "Continuing with build-tool installation only."
-          }
+      - name: Build exe
+        shell: cmd
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --uac-admin
+          --name BANNARAKX_UNIFIED --icon assets/logo.ico
+          --add-data "assets;assets"
+          --distpath dist/BANNARAKX_UNIFIED --workpath build run.py
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Project dependency installation failed."
-          }
+      - name: Copy originals
+        shell: cmd
+        run: xcopy /E /I /Y originals dist\BANNARAKX_UNIFIED\originals
 
-      - name: Locate Python entry point
-        id: entry
-        shell: pwsh
-        run: |
-          $candidates = @(
-            "run.py",
-            "main.py",
-            "app.py",
-            "BANNARAKX_UNIFIED/run.py",
-            "BANNARAKX_UNIFIED/main.py",
-            "BANNARAKX_UNIFIED/app.py",
-            "src/main.py",
-            "src/app.py"
-          )
-
-          $entry = $null
-
-          foreach ($candidate in $candidates) {
-            if (Test-Path $candidate -PathType Leaf) {
-              $entry = $candidate
-              break
-            }
-          }
-
-          if (-not $entry) {
-            Write-Host "::error::No recognized Python entry point found."
-            Write-Host "Review the Inspect repository output above."
-            exit 1
-          }
-
-          "entry=$entry" >> $env:GITHUB_OUTPUT
-          Write-Host "Selected entry point: $entry"
-
-      - name: Build single-file EXE
-        shell: pwsh
-        env:
-          ENTRY_POINT: ${{ steps.entry.outputs.entry }}
-        run: |
-          $entry = $env:ENTRY_POINT
-
-          $buildArgs = @(
-            "--noconfirm",
-            "--clean",
-            "--onefile",
-            "--windowed",
-            "--name",
-            "BANNARAKX PRO"
-          )
-
-          if (Test-Path "assets/logo.ico") {
-            $buildArgs += @("--icon", "assets/logo.ico")
-          }
-
-          if (Test-Path "assets") {
-            $buildArgs += @("--add-data", "assets;assets")
-          }
-
-          if (Test-Path "tools") {
-            $buildArgs += @("--add-data", "tools;tools")
-          }
-
-          if (Test-Path "bannarakx_unified") {
-            $buildArgs += @(
-              "--collect-submodules",
-              "bannarakx_unified"
-            )
-          }
-
-          $buildArgs += $entry
-
-          python -m PyInstaller @buildArgs
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller build failed."
-          }
-
-      - name: Verify EXE
-        shell: pwsh
-        run: |
-          $exe = "dist/BANNARAKX PRO.exe"
-
-          if (-not (Test-Path $exe -PathType Leaf)) {
-            throw "Build output EXE not found."
-          }
-
-          $file = Get-Item $exe
-
-          Write-Host "Build completed."
-          Write-Host "Name: $($file.Name)"
-          Write-Host "Size: $($file.Length) bytes"
-
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: BANNARAKX-PRO-Windows
-          path: "dist/BANNARAKX PRO.exe"
+          name: BANNARAKX_UNIFIED
+          path: dist/BANNARAKX_UNIFIED
           if-no-files-found: error
