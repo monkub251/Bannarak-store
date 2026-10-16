@@ -32,62 +32,70 @@ jobs:
 
       - name: Show repo files
         run: |
-          echo "== root =="; ls -la
-          echo "== python files =="; find . -name "*.py" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" | head -100
+          ls -la
+          find . -name "*.py" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" | head -100
+
+      - name: Detect app folder and entry point
+        run: |
+          ENTRY=""
+          for n in run.py main.py app.py; do
+            f=$(find . -maxdepth 3 -name "$n" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/tests/*" | head -1)
+            [ -n "$f" ] && ENTRY="$f" && break
+          done
+          if [ -z "$ENTRY" ]; then
+            ENTRY=$(grep -rlE "QApplication" --include="*.py" . \
+              --exclude-dir=.git --exclude-dir=venv --exclude-dir=.venv \
+              --exclude-dir=tests --exclude-dir=build --exclude-dir=dist 2>/dev/null | head -1)
+          fi
+          if [ -z "$ENTRY" ]; then
+            echo "::error::No desktop app entry point found in this repo. Put this workflow in the repo that contains run.py."
+            exit 1
+          fi
+          ENTRY="${ENTRY#./}"
+          APP_DIR=$(dirname "$ENTRY")
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "ENTRY_FILE=$(basename "$ENTRY")" >> "$GITHUB_ENV"
+          echo "Entry: $ENTRY | Folder: $APP_DIR"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          cd "$APP_DIR"
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt
           elif [ -f requirements.txt ]; then pip install -r requirements.txt
-          else echo "No requirements file, installing PySide6 only"; pip install PySide6
+          elif [ -f "$GITHUB_WORKSPACE/requirements-dev.txt" ]; then pip install -r "$GITHUB_WORKSPACE/requirements-dev.txt"
+          elif [ -f "$GITHUB_WORKSPACE/requirements.txt" ]; then pip install -r "$GITHUB_WORKSPACE/requirements.txt"
+          else pip install PySide6
           fi
           pip install pyinstaller pytest
 
       - name: Run tests
         run: |
+          cd "$APP_DIR"
           if [ -d tests ]; then
             python -m pytest -q tests || [ $? -eq 5 ]
           else
             echo "No tests folder, skipping"
           fi
 
-      - name: Detect entry point
-        id: detect
-        run: |
-          ENTRY=""
-          for f in run.py main.py app.py src/run.py src/main.py src/app.py; do
-            [ -f "$f" ] && ENTRY="$f" && break
-          done
-          if [ -z "$ENTRY" ]; then
-            ENTRY=$(grep -rlE "QApplication|__main__" --include="*.py" . \
-              --exclude-dir=.git --exclude-dir=venv --exclude-dir=.venv \
-              --exclude-dir=tests --exclude-dir=build --exclude-dir=dist 2>/dev/null | head -1 | sed 's|^\./||')
-          fi
-          if [ -z "$ENTRY" ]; then
-            echo "::error::Entry point (.py) not found. See 'Show repo files' step."
-            exit 1
-          fi
-          ICON=""
-          if [ -f assets/logo.ico ]; then ICON="assets/logo.ico"
-          else ICON=$(find . -name "*.ico" -not -path "./.git/*" | head -1 | sed 's|^\./||'); fi
-          echo "entry=$ENTRY" >> "$GITHUB_OUTPUT"
-          echo "icon=$ICON" >> "$GITHUB_OUTPUT"
-          echo "Entry: $ENTRY | Icon: ${ICON:-none}"
-
       - name: Build exe
         run: |
+          cd "$APP_DIR"
           ARGS=(--noconfirm --clean --onefile --windowed --uac-admin
                 --name "$APP_NAME"
-                --distpath "dist/$APP_NAME" --workpath build)
-          [ -n "${{ steps.detect.outputs.icon }}" ] && ARGS+=(--icon "${{ steps.detect.outputs.icon }}")
+                --distpath "$GITHUB_WORKSPACE/dist/$APP_NAME"
+                --workpath build)
+          ICON=""
+          if [ -f assets/logo.ico ]; then ICON="assets/logo.ico"
+          else ICON=$(find . -name "*.ico" -not -path "*/venv/*" -not -path "*/.venv/*" | head -1); fi
+          [ -n "$ICON" ] && ARGS+=(--icon "$ICON")
           [ -d assets ] && ARGS+=(--add-data "assets;assets")
-          pyinstaller "${ARGS[@]}" "${{ steps.detect.outputs.entry }}"
+          pyinstaller "${ARGS[@]}" "$ENTRY_FILE"
 
       - name: Copy originals
         run: |
-          if [ -d originals ]; then
-            cp -r originals "dist/$APP_NAME/originals"
+          if [ -d "$APP_DIR/originals" ]; then
+            cp -r "$APP_DIR/originals" "$GITHUB_WORKSPACE/dist/$APP_NAME/originals"
           else
             echo "No originals folder, skipping"
           fi
