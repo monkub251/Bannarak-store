@@ -13,95 +13,72 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
+    timeout-minutes: 40
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: "1"
-      APP_NAME: BANNARAKX_UNIFIED
-      MSYS_NO_PATHCONV: "1"
-      MSYS2_ARG_CONV_EXCL: "*"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Locate app folder
+        id: app
+        shell: bash
+        run: |
+          if [ -f run.py ]; then DIR="."
+          elif [ -f BANNARAKX_UNIFIED/run.py ]; then DIR="BANNARAKX_UNIFIED"
+          else
+            echo "::error::run.py not found. Repo contents:"
+            ls -la
+            exit 1
+          fi
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Show repo files
-        run: |
-          ls -la
-          find . -name "*.py" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" | head -100
-
-      - name: Detect app folder and entry point
-        run: |
-          ENTRY=""
-          for n in run.py main.py app.py; do
-            f=$(find . -maxdepth 3 -name "$n" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/tests/*" | head -1)
-            [ -n "$f" ] && ENTRY="$f" && break
-          done
-          if [ -z "$ENTRY" ]; then
-            ENTRY=$(grep -rlE "QApplication" --include="*.py" . \
-              --exclude-dir=.git --exclude-dir=venv --exclude-dir=.venv \
-              --exclude-dir=tests --exclude-dir=build --exclude-dir=dist 2>/dev/null | head -1)
-          fi
-          if [ -z "$ENTRY" ]; then
-            echo "::error::No desktop app entry point found in this repo. Put this workflow in the repo that contains run.py."
-            exit 1
-          fi
-          ENTRY="${ENTRY#./}"
-          APP_DIR=$(dirname "$ENTRY")
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "ENTRY_FILE=$(basename "$ENTRY")" >> "$GITHUB_ENV"
-          echo "Entry: $ENTRY | Folder: $APP_DIR"
+          cache: pip
+          cache-dependency-path: ${{ steps.app.outputs.dir }}/requirements-dev.txt
 
       - name: Install dependencies
+        working-directory: ${{ steps.app.outputs.dir }}
         run: |
           python -m pip install --upgrade pip
-          cd "$APP_DIR"
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt
-          elif [ -f requirements.txt ]; then pip install -r requirements.txt
-          elif [ -f "$GITHUB_WORKSPACE/requirements-dev.txt" ]; then pip install -r "$GITHUB_WORKSPACE/requirements-dev.txt"
-          elif [ -f "$GITHUB_WORKSPACE/requirements.txt" ]; then pip install -r "$GITHUB_WORKSPACE/requirements.txt"
-          else pip install PySide6
-          fi
-          pip install pyinstaller pytest
+          pip install -r requirements-dev.txt
+
+      # Compile PyInstaller's bootloader from source (the prebuilt one is what
+      # antivirus engines fingerprint). Falls back to the normal one on failure.
+      - name: Build PyInstaller bootloader from source
+        shell: bash
+        continue-on-error: true
+        run: |
+          pip uninstall -y pyinstaller
+          pip install --no-binary pyinstaller --no-cache-dir "pyinstaller>=6.6" \
+            || { echo "::warning::source build failed, using prebuilt PyInstaller"; pip install "pyinstaller>=6.6"; }
 
       - name: Run tests
-        run: |
-          cd "$APP_DIR"
-          if [ -d tests ]; then
-            python -m pytest -q tests || [ $? -eq 5 ]
-          else
-            echo "No tests folder, skipping"
-          fi
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: python -m pytest -q tests
 
       - name: Build exe
-        run: |
-          cd "$APP_DIR"
-          ARGS=(--noconfirm --clean --onefile --windowed --uac-admin
-                --name "$APP_NAME"
-                --distpath "$GITHUB_WORKSPACE/dist/$APP_NAME"
-                --workpath build)
-          ICON=""
-          if [ -f assets/logo.ico ]; then ICON="assets/logo.ico"
-          else ICON=$(find . -name "*.ico" -not -path "*/venv/*" -not -path "*/.venv/*" | head -1); fi
-          [ -n "$ICON" ] && ARGS+=(--icon "$ICON")
-          [ -d assets ] && ARGS+=(--add-data "assets;assets")
-          pyinstaller "${ARGS[@]}" "$ENTRY_FILE"
+        working-directory: ${{ steps.app.outputs.dir }}
+        shell: cmd
+        run: >
+          pyinstaller --noconfirm --clean --onedir --windowed --uac-admin
+          --name BANNARAKX_UNIFIED --icon assets/logo.ico --add-data "assets;assets"
+          --distpath dist --workpath build run.py
 
-      - name: Copy originals
-        run: |
-          if [ -d "$APP_DIR/originals" ]; then
-            cp -r "$APP_DIR/originals" "$GITHUB_WORKSPACE/dist/$APP_NAME/originals"
-          else
-            echo "No originals folder, skipping"
-          fi
+      - name: Copy originals next to exe
+        working-directory: ${{ steps.app.outputs.dir }}
+        shell: cmd
+        run: xcopy /E /I /Y originals dist\BANNARAKX_UNIFIED\originals
+
+      - name: Show SHA256 of exe
+        working-directory: ${{ steps.app.outputs.dir }}
+        shell: pwsh
+        run: Get-FileHash dist\BANNARAKX_UNIFIED\BANNARAKX_UNIFIED.exe -Algorithm SHA256
 
       - uses: actions/upload-artifact@v4
         with:
           name: BANNARAKX_UNIFIED
-          path: dist/BANNARAKX_UNIFIED
+          path: ${{ steps.app.outputs.dir }}/dist/BANNARAKX_UNIFIED
           if-no-files-found: error
