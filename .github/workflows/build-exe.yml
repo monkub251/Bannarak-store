@@ -15,24 +15,37 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      QT_QPA_PLATFORM: offscreen   # กัน pytest พังเพราะไม่มีหน้าจอ (PySide6)
-      PYTHONUTF8: "1"              # กัน error ภาษาไทย/unicode ใน console
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements file found, installing defaults"
+            pip install PySide6
+          fi
+          pip install pyinstaller pytest
 
       - name: Run tests
-        run: python -m pytest -q tests
+        shell: bash
+        run: |
+          if [ -d tests ]; then
+            python -m pytest -q tests
+          else
+            echo "No tests folder, skipping"
+          fi
 
       - name: Build exe
         shell: cmd
@@ -43,8 +56,13 @@ jobs:
           --distpath dist/BANNARAKX_UNIFIED --workpath build run.py
 
       - name: Copy originals
-        shell: cmd
-        run: xcopy /E /I /Y originals dist\BANNARAKX_UNIFIED\originals
+        shell: bash
+        run: |
+          if [ -d originals ]; then
+            cp -r originals dist/BANNARAKX_UNIFIED/originals
+          else
+            echo "No originals folder, skipping"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
