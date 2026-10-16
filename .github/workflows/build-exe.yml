@@ -1,5 +1,5 @@
 
-name: Build Windows EXE
+name: Build BANNARAKX PRO
 
 on:
   workflow_dispatch:
@@ -27,32 +27,49 @@ jobs:
       - name: Inspect repository
         shell: pwsh
         run: |
-          Write-Host "Repository root:"
-          Get-Location
-          Write-Host "Files:"
-          Get-ChildItem -Force -Name
+          Write-Host "Repository files:"
+          Get-ChildItem -Force | Select-Object Name
+
           Write-Host "Python files:"
           Get-ChildItem -Recurse -File -Filter "*.py" |
             Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\venv\\|\\__pycache__\\'
+              $_.FullName -notmatch '\\.git\\|\\node_modules\\|\\venv\\|\\dist\\|\\build\\'
             } |
             ForEach-Object {
               Write-Host $_.FullName
             }
 
-      - name: Install dependencies
+          Write-Host "Project configuration files:"
+          Get-ChildItem -Recurse -File |
+            Where-Object {
+              $_.Name -in @(
+                "package.json",
+                "requirements.txt",
+                "pyproject.toml",
+                "index.html",
+                "setup.py"
+              )
+            } |
+            ForEach-Object {
+              Write-Host $_.FullName
+            }
+
+      - name: Install Python build tools
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           if ($LASTEXITCODE -ne 0) {
-            throw "pip upgrade failed"
+            throw "Pip installation failed."
           }
 
           python -m pip install pyinstaller
           if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller installation failed"
+            throw "PyInstaller installation failed."
           }
 
+      - name: Install project dependencies
+        shell: pwsh
+        run: |
           if (Test-Path "requirements.txt") {
             python -m pip install -r requirements.txt
           }
@@ -63,15 +80,15 @@ jobs:
             python -m pip install .
           }
           else {
-            Write-Host "No dependency manifest found."
-            Write-Host "Additional application dependencies may be required."
+            Write-Host "No Python dependency manifest found."
+            Write-Host "Continuing with build-tool installation only."
           }
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Dependency installation failed"
+            throw "Project dependency installation failed."
           }
 
-      - name: Locate entry point
+      - name: Locate Python entry point
         id: entry
         shell: pwsh
         run: |
@@ -86,23 +103,32 @@ jobs:
             "src/app.py"
           )
 
-          $entry = $candidates |
-            Where-Object { Test-Path $_ -PathType Leaf } |
-            Select-Object -First 1
+          $entry = $null
 
-          if (-not $entry) {
-            throw "No known Python entry point found. Check the Inspect repository log."
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate -PathType Leaf) {
+              $entry = $candidate
+              break
+            }
           }
 
-          "ENTRY=$entry" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Entry point: $entry"
+          if (-not $entry) {
+            Write-Host "::error::No recognized Python entry point found."
+            Write-Host "Review the Inspect repository output above."
+            exit 1
+          }
+
+          "entry=$entry" >> $env:GITHUB_OUTPUT
+          Write-Host "Selected entry point: $entry"
 
       - name: Build single-file EXE
         shell: pwsh
+        env:
+          ENTRY_POINT: ${{ steps.entry.outputs.entry }}
         run: |
-          $entry = "${{ steps.entry.outputs.ENTRY }}"
+          $entry = $env:ENTRY_POINT
 
-          $args = @(
+          $buildArgs = @(
             "--noconfirm",
             "--clean",
             "--onefile",
@@ -112,30 +138,30 @@ jobs:
           )
 
           if (Test-Path "assets/logo.ico") {
-            $args += @("--icon", "assets/logo.ico")
+            $buildArgs += @("--icon", "assets/logo.ico")
           }
 
           if (Test-Path "assets") {
-            $args += @("--add-data", "assets;assets")
+            $buildArgs += @("--add-data", "assets;assets")
           }
 
           if (Test-Path "tools") {
-            $args += @("--add-data", "tools;tools")
+            $buildArgs += @("--add-data", "tools;tools")
           }
 
           if (Test-Path "bannarakx_unified") {
-            $args += @(
+            $buildArgs += @(
               "--collect-submodules",
               "bannarakx_unified"
             )
           }
 
-          $args += $entry
+          $buildArgs += $entry
 
-          python -m PyInstaller @args
+          python -m PyInstaller @buildArgs
 
           if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller build failed"
+            throw "PyInstaller build failed."
           }
 
       - name: Verify EXE
@@ -143,16 +169,19 @@ jobs:
         run: |
           $exe = "dist/BANNARAKX PRO.exe"
 
-          if (-not (Test-Path $exe)) {
-            throw "EXE was not created"
+          if (-not (Test-Path $exe -PathType Leaf)) {
+            throw "Build output EXE not found."
           }
 
-          Get-Item $exe |
-            Select-Object Name, Length
+          $file = Get-Item $exe
+
+          Write-Host "Build completed."
+          Write-Host "Name: $($file.Name)"
+          Write-Host "Size: $($file.Length) bytes"
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: BANNARAKX-PRO-exe
+          name: BANNARAKX-PRO-Windows
           path: "dist/BANNARAKX PRO.exe"
           if-no-files-found: error
