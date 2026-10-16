@@ -12,17 +12,19 @@ jobs:
         with: { python-version: '3.12' }
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+        working-directory: ./BANNARAKX_UNIFIED
       - name: Build single-file exe
         shell: bash
         run: |
+          cd BANNARAKX_UNIFIED
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name "BANNARAKX PRO" --icon assets/logo.ico \
             --add-data "assets;assets" --add-data "tools;tools" --collect-submodules bannarakx_unified \
             run.py
       - name: Smoke-launch the exe for 8 seconds
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\BANNARAKX PRO.exe" -PassThru
+          $p = Start-Process -FilePath "BANNARAKX_UNIFIED\dist\BANNARAKX PRO.exe" -PassThru
           Start-Sleep 8
           if ($p.HasExited) { throw "exe exited early with code $($p.ExitCode)" } else { Stop-Process $p }
       - uses: actions/upload-artifact@v4
-        with: { name: BANNARAKX-PRO-exe, path: "dist/BANNARAKX PRO.exe" }
+        with: { name: BANNARAKX-PRO-exe, path: "BANNARAKX_UNIFIED/dist/BANNARAKX PRO.exe" }
