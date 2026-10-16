@@ -14,9 +14,15 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: "1"
+      APP_NAME: BANNARAKX_UNIFIED
+      MSYS_NO_PATHCONV: "1"
+      MSYS2_ARG_CONV_EXCL: "*"
     steps:
       - uses: actions/checkout@v4
 
@@ -24,42 +30,64 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Show repo files
+        run: |
+          echo "== root =="; ls -la
+          echo "== python files =="; find . -name "*.py" -not -path "./.git/*" -not -path "*/venv/*" -not -path "*/.venv/*" | head -100
+
       - name: Install dependencies
-        shell: bash
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements-dev.txt ]; then
-            pip install -r requirements-dev.txt
-          elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "No requirements file found, installing defaults"
-            pip install PySide6
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt
+          elif [ -f requirements.txt ]; then pip install -r requirements.txt
+          else echo "No requirements file, installing PySide6 only"; pip install PySide6
           fi
           pip install pyinstaller pytest
 
       - name: Run tests
-        shell: bash
         run: |
           if [ -d tests ]; then
-            python -m pytest -q tests
+            python -m pytest -q tests || [ $? -eq 5 ]
           else
             echo "No tests folder, skipping"
           fi
 
+      - name: Detect entry point
+        id: detect
+        run: |
+          ENTRY=""
+          for f in run.py main.py app.py src/run.py src/main.py src/app.py; do
+            [ -f "$f" ] && ENTRY="$f" && break
+          done
+          if [ -z "$ENTRY" ]; then
+            ENTRY=$(grep -rlE "QApplication|__main__" --include="*.py" . \
+              --exclude-dir=.git --exclude-dir=venv --exclude-dir=.venv \
+              --exclude-dir=tests --exclude-dir=build --exclude-dir=dist 2>/dev/null | head -1 | sed 's|^\./||')
+          fi
+          if [ -z "$ENTRY" ]; then
+            echo "::error::Entry point (.py) not found. See 'Show repo files' step."
+            exit 1
+          fi
+          ICON=""
+          if [ -f assets/logo.ico ]; then ICON="assets/logo.ico"
+          else ICON=$(find . -name "*.ico" -not -path "./.git/*" | head -1 | sed 's|^\./||'); fi
+          echo "entry=$ENTRY" >> "$GITHUB_OUTPUT"
+          echo "icon=$ICON" >> "$GITHUB_OUTPUT"
+          echo "Entry: $ENTRY | Icon: ${ICON:-none}"
+
       - name: Build exe
-        shell: cmd
-        run: >
-          pyinstaller --noconfirm --clean --onefile --windowed --uac-admin
-          --name BANNARAKX_UNIFIED --icon assets/logo.ico
-          --add-data "assets;assets"
-          --distpath dist/BANNARAKX_UNIFIED --workpath build run.py
+        run: |
+          ARGS=(--noconfirm --clean --onefile --windowed --uac-admin
+                --name "$APP_NAME"
+                --distpath "dist/$APP_NAME" --workpath build)
+          [ -n "${{ steps.detect.outputs.icon }}" ] && ARGS+=(--icon "${{ steps.detect.outputs.icon }}")
+          [ -d assets ] && ARGS+=(--add-data "assets;assets")
+          pyinstaller "${ARGS[@]}" "${{ steps.detect.outputs.entry }}"
 
       - name: Copy originals
-        shell: bash
         run: |
           if [ -d originals ]; then
-            cp -r originals dist/BANNARAKX_UNIFIED/originals
+            cp -r originals "dist/$APP_NAME/originals"
           else
             echo "No originals folder, skipping"
           fi
