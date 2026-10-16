@@ -1,49 +1,24 @@
 
-name: Build Windows EXE
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [main, master]
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            BANNARAKX_UNIFIED/requirements.txt
 
-      - name: Locate project files
+      - name: Inspect repository
         shell: pwsh
         run: |
           Write-Host "Repository root: $PWD"
-
           Get-ChildItem -Force
-
-          $files = @(
-            "requirements.txt",
-            "BANNARAKX_UNIFIED/requirements.txt",
-            "run.py",
-            "BANNARAKX_UNIFIED/run.py",
-            "assets/logo.ico"
-          )
-
-          foreach ($file in $files) {
-            Write-Host "$file : $(Test-Path $file)"
-          }
+          Write-Host "Searching dependency files..."
+          Get-ChildItem -Recurse -File |
+            Where-Object {
+              $_.Name -in @(
+                "requirements.txt",
+                "pyproject.toml",
+                "Pipfile"
+              )
+            } |
+            Select-Object -ExpandProperty FullName
 
       - name: Install dependencies
         shell: pwsh
@@ -53,108 +28,25 @@ jobs:
             throw "Failed to upgrade pip."
           }
 
-          $requirements = @(
-            "requirements.txt",
-            "BANNARAKX_UNIFIED/requirements.txt"
-          ) | Where-Object { Test-Path $_ } |
-            Select-Object -First 1
-
-          if (-not $requirements) {
-            throw "requirements.txt not found. Check the repository file structure."
-          }
-
-          python -m pip install -r $requirements
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install project dependencies."
-          }
-
           python -m pip install pyinstaller
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to install PyInstaller."
           }
 
-      - name: Build single-file exe
-        shell: pwsh
-        run: |
-          $entry = if (Test-Path "run.py") {
-            "run.py"
-          } elseif (Test-Path "BANNARAKX_UNIFIED/run.py") {
-            "BANNARAKX_UNIFIED/run.py"
-          } else {
-            throw "run.py not found. Set the correct application entry point."
+          if (Test-Path "requirements.txt") {
+            python -m pip install -r requirements.txt
+          }
+          elseif (Test-Path "BANNARAKX_UNIFIED/requirements.txt") {
+            python -m pip install -r BANNARAKX_UNIFIED/requirements.txt
+          }
+          elseif (Test-Path "pyproject.toml") {
+            python -m pip install .
+          }
+          else {
+            Write-Host "::warning::No dependency manifest found. Only PyInstaller is installed."
+            Write-Host "Install the application's actual dependencies before building."
           }
 
-          $args = @(
-            "--noconfirm",
-            "--clean",
-            "--onefile",
-            "--windowed",
-            "--name", "BANNARAKX PRO"
-          )
-
-          if (Test-Path "assets/logo.ico") {
-            $args += @("--icon", "assets/logo.ico")
-          }
-
-          if (Test-Path "assets") {
-            $args += @("--add-data", "assets;assets")
-          }
-
-          if (Test-Path "tools") {
-            $args += @("--add-data", "tools;tools")
-          }
-
-          if (Test-Path "bannarakx_unified") {
-            $args += @("--collect-submodules", "bannarakx_unified")
-          } elseif (Test-Path "BANNARAKX_UNIFIED") {
-            $args += @("--collect-submodules", "BANNARAKX_UNIFIED")
-          }
-
-          $args += $entry
-
-          python -m PyInstaller @args
           if ($LASTEXITCODE -ne 0) {
-            throw "PyInstaller build failed."
+            throw "Dependency installation failed."
           }
-
-      - name: Verify executable
-        shell: pwsh
-        run: |
-          $exe = "dist/BANNARAKX PRO.exe"
-
-          if (-not (Test-Path $exe)) {
-            throw "Build output not found: $exe"
-          }
-
-          Get-Item $exe |
-            Select-Object Name, Length
-
-      - name: Smoke-launch the exe for 8 seconds
-        shell: pwsh
-        run: |
-          $exe = Join-Path $PWD "dist/BANNARAKX PRO.exe"
-          $p = Start-Process -FilePath $exe -PassThru
-
-          try {
-            Start-Sleep -Seconds 8
-            $p.Refresh()
-
-            if ($p.HasExited) {
-              throw "EXE exited early with code $($p.ExitCode)."
-            }
-
-            Write-Host "EXE remained running for 8 seconds."
-          }
-          finally {
-            $p.Refresh()
-            if (-not $p.HasExited) {
-              Stop-Process -Id $p.Id -Force
-            }
-          }
-
-      - name: Upload executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: BANNARAKX-PRO-exe
-          path: "dist/BANNARAKX PRO.exe"
-          if-no-files-found: error
