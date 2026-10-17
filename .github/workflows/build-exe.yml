@@ -12,12 +12,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Find app folder
+      - name: Unzip and find app folder
         shell: pwsh
         run: |
-          Get-ChildItem -Recurse -Depth 3 | Where-Object { -not $_.FullName.Contains('.git') } | Select-Object -First 80 FullName
+          Get-ChildItem *.zip -ErrorAction SilentlyContinue | ForEach-Object { Expand-Archive -Path $_.FullName -DestinationPath "_src" -Force }
           $m = Get-ChildItem -Recurse -Filter main.py | Where-Object { Test-Path (Join-Path $_.DirectoryName 'app') } | Select-Object -First 1
-          if (-not $m) { Write-Error "ไม่พบ main.py + โฟลเดอร์ app ใน repo - ยังอัปโหลดไฟล์ไม่ครบ"; exit 1 }
+          if (-not $m) { Get-ChildItem -Recurse -Depth 2 | Select-Object -First 60 FullName; Write-Error "ไม่พบ main.py"; exit 1 }
           "APP_DIR=$($m.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "APP_DIR = $($m.DirectoryName)"
 
