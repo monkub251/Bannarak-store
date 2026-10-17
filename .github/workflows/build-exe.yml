@@ -1,84 +1,33 @@
-name: build-exe
-
+name: Build EXE
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: build-exe-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 40
-    env:
-      QT_QPA_PLATFORM: offscreen
-      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Locate app folder
-        id: app
-        shell: bash
-        run: |
-          if [ -f run.py ]; then DIR="."
-          elif [ -f BANNARAKX_UNIFIED/run.py ]; then DIR="BANNARAKX_UNIFIED"
-          else
-            echo "::error::run.py not found. Repo contents:"
-            ls -la
-            exit 1
-          fi
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: ${{ steps.app.outputs.dir }}/requirements-dev.txt
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt
 
-      - name: Install dependencies
-        working-directory: ${{ steps.app.outputs.dir }}
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-
-      # Compile PyInstaller's bootloader from source (the prebuilt one is what
-      # antivirus engines fingerprint). Falls back to the normal one on failure.
-      - name: Build PyInstaller bootloader from source
-        shell: bash
-        continue-on-error: true
-        run: |
-          pip uninstall -y pyinstaller
-          pip install --no-binary pyinstaller --no-cache-dir "pyinstaller>=6.6" \
-            || { echo "::warning::source build failed, using prebuilt PyInstaller"; pip install "pyinstaller>=6.6"; }
-
-      - name: Run tests
-        working-directory: ${{ steps.app.outputs.dir }}
-        run: python -m pytest -q tests
-
-      - name: Build exe
-        working-directory: ${{ steps.app.outputs.dir }}
+      # คอมไพล์ bootloader ของ PyInstaller เอง (ลดโอกาสโดนตีว่าเป็นไวรัส)
+      - name: Build PyInstaller from source
         shell: cmd
-        run: >
-          pyinstaller --noconfirm --clean --onedir --windowed --uac-admin
-          --name BANNARAKX_UNIFIED --icon assets/logo.ico --add-data "assets;assets"
-          --distpath dist --workpath build run.py
+        run: |
+          git clone --depth 1 --branch v6.11.1 https://github.com/pyinstaller/pyinstaller.git pyi_src
+          cd pyi_src\bootloader
+          python ./waf all
+          cd ..
+          python -m pip install .
 
-      - name: Copy originals next to exe
-        working-directory: ${{ steps.app.outputs.dir }}
+      - name: Build
         shell: cmd
-        run: xcopy /E /I /Y originals dist\BANNARAKX_UNIFIED\originals
-
-      - name: Show SHA256 of exe
-        working-directory: ${{ steps.app.outputs.dir }}
-        shell: pwsh
-        run: Get-FileHash dist\BANNARAKX_UNIFIED\BANNARAKX_UNIFIED.exe -Algorithm SHA256
+        run: python -m PyInstaller --noconfirm --clean --onedir --windowed --uac-admin --noupx --name FiveM_FPS_Optimizer --icon assets\icon.ico --add-data "assets;assets" --add-data "pack;pack" --add-data "cache;cache" --add-data "gifs;gifs" --exclude-module tkinter main.py
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BANNARAKX_UNIFIED
-          path: ${{ steps.app.outputs.dir }}/dist/BANNARAKX_UNIFIED
-          if-no-files-found: error
+          name: FiveM_FPS_Optimizer
+          path: dist/FiveM_FPS_Optimizer
