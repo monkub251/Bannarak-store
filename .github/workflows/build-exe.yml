@@ -3,25 +3,28 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-env:
-  APP_DIR: "."          # ถ้าไฟล์อยู่ในโฟลเดอร์ย่อย ให้ใส่ชื่อโฟลเดอร์ เช่น fivem_optimizer
 jobs:
   build:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: ${{ env.APP_DIR }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Check files
-        shell: cmd
-        run: dir
+
+      - name: Find app folder
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Depth 3 | Where-Object { -not $_.FullName.Contains('.git') } | Select-Object -First 80 FullName
+          $m = Get-ChildItem -Recurse -Filter main.py | Where-Object { Test-Path (Join-Path $_.DirectoryName 'app') } | Select-Object -First 1
+          if (-not $m) { Write-Error "ไม่พบ main.py + โฟลเดอร์ app ใน repo - ยังอัปโหลดไฟล์ไม่ครบ"; exit 1 }
+          "APP_DIR=$($m.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "APP_DIR = $($m.DirectoryName)"
+
       - run: python -m pip install PySide6-Essentials numpy pyinstaller
 
       - name: Build
+        working-directory: ${{ env.APP_DIR }}
         shell: cmd
         run: python -m PyInstaller --noconfirm --clean --onedir --windowed --uac-admin --noupx --name FiveM_FPS_Optimizer --icon assets\icon.ico --add-data "assets;assets" --add-data "pack;pack" --add-data "cache;cache" --add-data "gifs;gifs" --exclude-module tkinter main.py
 
