@@ -3,25 +3,23 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+env:
+  APP_DIR: "."          # ถ้าไฟล์อยู่ในโฟลเดอร์ย่อย ให้ใส่ชื่อโฟลเดอร์ เช่น fivem_optimizer
 jobs:
   build:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m pip install -r requirements.txt
-
-      # คอมไพล์ bootloader ของ PyInstaller เอง (ลดโอกาสโดนตีว่าเป็นไวรัส)
-      - name: Build PyInstaller from source
+      - name: Check files
         shell: cmd
-        run: |
-          git clone --depth 1 --branch v6.11.1 https://github.com/pyinstaller/pyinstaller.git pyi_src
-          cd pyi_src\bootloader
-          python ./waf all
-          cd ..
-          python -m pip install .
+        run: dir
+      - run: python -m pip install PySide6-Essentials numpy pyinstaller
 
       - name: Build
         shell: cmd
@@ -30,4 +28,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: FiveM_FPS_Optimizer
-          path: dist/FiveM_FPS_Optimizer
+          path: ${{ env.APP_DIR }}/dist/FiveM_FPS_Optimizer
